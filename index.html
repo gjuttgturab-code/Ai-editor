@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Video Editor MVP</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0f1115;
+    color: #e8e8ea;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 32px 20px; }
+  .eyebrow { font-size: 11px; letter-spacing: 2px; color: #6b7280; font-family: ui-monospace, monospace; }
+  h1 { font-size: 28px; margin: 4px 0 4px; color: #f4f4f5; }
+  .sub { font-size: 14px; color: #9ca3af; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 24px; }
+  @media (min-width: 768px) { .grid { grid-template-columns: 1fr 1fr; } }
+  .dropzone {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; height: 260px; border: 2px dashed #2a2d34; border-radius: 10px;
+    color: #6b7280; cursor: pointer; text-align: center; padding: 16px;
+  }
+  .dropzone.drag { border-color: #c9a227; color: #c9a227; background: #1a1a1f; }
+  video { width: 100%; border-radius: 10px; background: #000; display: block; }
+  .video-box { position: relative; border: 1px solid #2a2d34; border-radius: 10px; overflow: hidden; background: #000; margin: 0 auto; }
+  .video-box.vertical { max-width: 240px; aspect-ratio: 9/16; }
+  .video-box.vertical video { height: 100%; object-fit: cover; }
+  .caption-overlay {
+    position: absolute; left: 0; right: 0; bottom: 8%; text-align: center; padding: 0 16px; pointer-events: none;
+  }
+  .caption-overlay span { background: rgba(0,0,0,0.7); padding: 4px 8px; border-radius: 4px; font-weight: 700; font-size: 14px; }
+  .controls { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .row-between { display: flex; justify-content: space-between; font-size: 12px; color: #9ca3af; }
+  input[type=range] { width: 100%; }
+  button {
+    font-family: inherit; font-size: 13px; font-weight: 600; border: none; border-radius: 6px;
+    padding: 10px 16px; cursor: pointer;
+  }
+  .btn-primary { background: #c9a227; color: #0f1115; }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-ghost { background: transparent; border: 1px solid #2a2d34; color: #9ca3af; }
+  label.small { font-size: 11px; color: #9ca3af; display: block; margin-bottom: 6px; letter-spacing: 0.5px; }
+  textarea {
+    width: 100%; background: #16181d; border: 1px solid #2a2d34; color: #e8e8ea;
+    border-radius: 8px; padding: 10px; font-family: inherit; font-size: 13px; resize: vertical;
+  }
+  .cap-list { margin-top: 14px; max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .cap-item { display: flex; justify-content: space-between; font-size: 12px; padding: 6px 8px; border-radius: 4px; background: #16181d; color: #9ca3af; }
+  .cap-item.active { background: #20344a; color: #c9a227; }
+  .error { color: #f87171; font-size: 12px; margin-top: 8px; }
+  #fileInput { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">MVP // REAL DEPLOY</div>
+  <h1>Video Editor</h1>
+  <div class="sub">Upload → AI captions → trim → vertical preview.</div>
+
+  <div class="grid">
+    <div>
+      <div id="dropzone" class="dropzone">
+        <span>tap to choose a video, or drag one here</span>
+        <input type="file" id="fileInput" accept="video/*" />
+      </div>
+      <div id="videoWrap" style="display:none;">
+        <div id="videoBox" class="video-box">
+          <video id="video"></video>
+          <div id="capOverlay" class="caption-overlay" style="display:none;"><span id="capText"></span></div>
+        </div>
+        <div class="controls">
+          <div>
+            <div class="row-between"><span>trim start</span><span id="trimStartLabel">0.0s</span></div>
+            <input type="range" id="trimStart" min="0" max="0" step="0.1" value="0" />
+          </div>
+          <div>
+            <div class="row-between"><span>trim end</span><span id="trimEndLabel">0.0s</span></div>
+            <input type="range" id="trimEnd" min="0" max="0" step="0.1" value="0" />
+          </div>
+          <button id="verticalBtn" class="btn-ghost">switch to vertical export</button>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <label class="small">TRANSCRIPT (paste what's said — real ASR wiring is a later step)</label>
+      <textarea id="transcript" rows="6" placeholder="paste or type the spoken transcript here..."></textarea>
+      <button id="genBtn" class="btn-primary" style="margin-top:10px;" disabled>generate AI captions</button>
+      <div id="errorBox" class="error" style="display:none;"></div>
+      <div id="capList" class="cap-list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const videoWrap = document.getElementById('videoWrap');
+  const videoBox = document.getElementById('videoBox');
+  const video = document.getElementById('video');
+  const trimStart = document.getElementById('trimStart');
+  const trimEnd = document.getElementById('trimEnd');
+  const trimStartLabel = document.getElementById('trimStartLabel');
+  const trimEndLabel = document.getElementById('trimEndLabel');
+  const verticalBtn = document.getElementById('verticalBtn');
+  const transcriptEl = document.getElementById('transcript');
+  const genBtn = document.getElementById('genBtn');
+  const errorBox = document.getElementById('errorBox');
+  const capList = document.getElementById('capList');
+  const capOverlay = document.getElementById('capOverlay');
+  const capText = document.getElementById('capText');
+
+  let duration = 0;
+  let captions = [];
+  let vertical = false;
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('drag');
+    loadFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', (e) => loadFile(e.target.files[0]));
+
+  function loadFile(file) {
+    if (!file || !file.type.startsWith('video/')) return;
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    dropzone.style.display = 'none';
+    videoWrap.style.display = 'block';
+    captions = [];
+    renderCapList();
+    genBtn.disabled = !transcriptEl.value.trim();
+  }
+
+  video.addEventListener('loadedmetadata', () => {
+    duration = video.duration;
+    trimStart.max = duration; trimEnd.max = duration; trimEnd.value = duration;
+    trimEndLabel.textContent = duration.toFixed(1) + 's';
+  });
+
+  trimStart.addEventListener('input', () => {
+    trimStartLabel.textContent = (+trimStart.value).toFixed(1) + 's';
+  });
+  trimEnd.addEventListener('input', () => {
+    trimEndLabel.textContent = (+trimEnd.value).toFixed(1) + 's';
+  });
+
+  verticalBtn.addEventListener('click', () => {
+    vertical = !vertical;
+    videoBox.classList.toggle('vertical', vertical);
+    verticalBtn.textContent = vertical ? 'vertical (9:16)' : 'switch to vertical export';
+  });
+
+  transcriptEl.addEventListener('input', () => {
+    genBtn.disabled = !transcriptEl.value.trim() || !duration;
+  });
+
+  video.addEventListener('timeupdate', () => {
+    const t = video.currentTime;
+    const c = captions.find((c) => t >= c.start && t < c.end);
+    if (c) { capOverlay.style.display = 'block'; capText.textContent = c.text; }
+    else { capOverlay.style.display = 'none'; }
+    renderCapList(t);
+  });
+
+  function renderCapList(activeTime) {
+    capList.innerHTML = '';
+    captions.forEach((c) => {
+      const div = document.createElement('div');
+      const isActive = activeTime !== undefined && activeTime >= c.start && activeTime < c.end;
+      div.className = 'cap-item' + (isActive ? ' active' : '');
+      div.innerHTML = `<span>${c.text}</span><span>${c.start.toFixed(1)}–${c.end.toFixed(1)}s</span>`;
+      capList.appendChild(div);
+    });
+  }
+
+  genBtn.addEventListener('click', async () => {
+    errorBox.style.display = 'none';
+    genBtn.disabled = true;
+    genBtn.textContent = 'generating...';
+    try {
+      const res = await fetch('/api/generate-captions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: transcriptEl.value, duration }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'failed');
+      captions = data.captions;
+      renderCapList();
+    } catch (e) {
+      errorBox.textContent = 'Caption generation failed. Check API key is set on the server.';
+      errorBox.style.display = 'block';
+    } finally {
+      genBtn.disabled = false;
+      genBtn.textContent = 'generate AI captions';
+    }
+  });
+</script>
+</body>
+</html>
